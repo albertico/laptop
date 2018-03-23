@@ -1,0 +1,287 @@
+#!/usr/bin/env fish
+
+set -g brew_fish_path '/usr/local/bin/fish'
+
+######################
+## HELPER FUNCTIONS ##
+######################
+
+function __laptop_mac_exit_on_error
+  if not test $status = 0
+    echo "Something went unexpectedly wrong...  Aborting."
+    exit 1
+  end
+end
+
+function __laptop_mac_create_and_set_fish_config_file
+  # $HOME/.config
+  if not test -d "$HOME/.config"
+    mkdir "$HOME/.config"
+  end
+  # $HOME/.config/fish
+  if not test -d "$HOME/.config/fish"
+    mkdir "$HOME/.config/fish"
+  end
+  # $HOME/.config/fish/config.fish
+  if not test -e "$HOME/.config/fish/config.fish"
+    touch "$HOME/.config/fish/config.fish"
+  end
+  # Set SHELL_FILE to Fish config.
+  set -g fish_config_file "$HOME/.config/fish/config.fish"
+end
+
+function __laptop_mac_append_text_to_file
+  set -l filename $argv[1]
+  set -l text $argv[2]
+  if not grep -qs "^$text\$" "$filename"
+    printf "\n%s\n" "$text" >> "$filename"
+  end
+end
+
+function __laptop_mac_append_text_to_fish_config_file
+  set -l text $argv[1]
+  __laptop_mac_append_text_to_file "$fish_config_file" "$text"
+end
+
+function __laptop_mac_replace_text_in_fish_config_file
+  set -l pattern $argv[1]
+  set -l text $argv[2]
+  set -l bkp_extension "."(date '+%Y%m%d_%H%M%S')
+  if grep -qs "$pattern" "$fish_config_file"
+    sed -i "$bkp_extension" "s/$pattern/$text/" "$fish_config_file"
+  end
+end
+
+function __laptop_mac_brew_formula_is_installed
+  set -l formula $argv[1]
+  brew list -1 | grep -Fqx "$formula"
+end
+
+function __laptop_mac_brew_tap_is_installed
+  set -l repo $argv[1]
+  brew tap -1 | grep -Fqx "$repo"
+end
+
+function __laptop_mac_brew_bundle_file
+  set -l brew_file $argv[1]
+  brew bundle --file="$brew_file"
+  __laptop_mac_exit_on_error
+end
+
+function __laptop_mac_brew_update
+  brew update
+  __laptop_mac_exit_on_error
+end
+
+function __laptop_mac_brew_install_formula
+  set -l formula $argv[1]
+  if not __laptop_mac_brew_formula_is_installed "$formula"
+    echo "Installing $formula..."
+    brew install "$formula"
+    __laptop_mac_exit_on_error
+  else
+    echo "$formula is already installed"
+  end
+end
+
+function __laptop_mac_brew_force_uninstall_formula
+  set -l formula $argv[1]
+  if __laptop_mac_brew_formula_is_installed "$formula"
+    brew uninstall --force "$formula"
+  end
+end
+
+function __laptop_mac_brew_untap_repo
+  set -l repo $argv[1]
+  if __laptop_mac_brew_tap_is_installed "$repo"
+    brew untap "$repo"
+  end
+end
+
+function __laptop_mac_omf_update
+  omf update
+  __laptop_mac_exit_on_error
+end
+
+function __laptop_mac_omf_install_package
+  set -l pkg $argv[1]
+  omf install "$pkg"
+  __laptop_mac_exit_on_error
+end
+
+function __laptop_mac_get_latest_installed_ruby
+  find "$HOME/.rubies" -maxdepth 1 -name 'ruby-*' | tail -n1 | egrep -o '\d+\.\d+\.\d+'
+end
+
+##########################
+## LAPTOP CONFIGURATION ##
+##########################
+
+# Check for brew and install if not found.
+set -x PATH "/usr/local/bin" $PATH
+if not command -sq brew
+  echo "Homebrew not found, downloading and installing..."
+  curl -fsS 'https://raw.githubusercontent.com/Homebrew/install/master/install' | ruby
+  __laptop_mac_exit_on_error
+else
+  echo "Homebrew found!"
+  echo "Updating Homebrew..."
+  __laptop_mac_brew_update
+end
+
+# Install brew fish
+__laptop_mac_brew_install_formula "fish"
+
+# Make brew fish the default shell (if not already).
+if not test $SHELL = $brew_fish_path
+  if not grep -qs "^$brew_fish_path\$" '/etc/shells'
+    echo "Appending '$brew_fish_path' to '/etc/shells'"
+    echo "$brew_fish_path" | sudo tee -a '/etc/shells'
+  end
+  echo "=== Changing shell to fish ==="
+  chsh -s "$brew_fish_path"
+  __laptop_mac_exit_on_error
+else
+  echo "Seems that Fish is already your default shell. Great!"
+end
+
+# Set default Fish configuration.
+__laptop_mac_create_and_set_fish_config_file
+__laptop_mac_append_text_to_fish_config_file 'set -x PATH "/usr/local/bin" "/usr/local/sbin" $PATH'
+
+# Install Oh-My-Fish.
+if not type -q omf
+  echo "Oh-My-Fish not found, downloading and installing..."
+  set -l omf_install (mktemp -d /tmp/omf.XXXXXX)"/install"
+  curl -L 'https://get.oh-my.fish' > "$omf_install"
+  /usr/local/bin/fish "$omf_install" --noninteractive --yes
+  __laptop_mac_exit_on_error
+  rm "$omf_install"
+end
+# Update Oh-My-Fish.
+echo "Updating Oh-My-Fish..."
+__laptop_mac_omf_update
+# Install Oh-My-Fish core packages...
+echo "Making sure that core Oh-My-Fish packages are installed..."
+__laptop_mac_omf_install_package "https://github.com/laughedelic/brew-completions"
+__laptop_mac_omf_install_package "foreign-env"
+
+# Doing some known Homebrew cleanup...
+# Remove brew-cask since it is now installed as part of brew tap caskroom/cask.
+# See https://github.com/caskroom/homebrew-cask/releases/tag/v0.60.0
+__laptop_mac_brew_force_uninstall_formula "brew-cask"
+# Remove cloudfoundry-cli.
+__laptop_mac_brew_force_uninstall_formula "cloudfoundry-cli"
+# Untap caskroom/versions.
+__laptop_mac_brew_untap_repo "caskroom/versions"
+
+# Install core packages and taps.
+__laptop_mac_brew_bundle_file "Brewfile.core"
+
+# Install ruby and configure fish
+echo "Checking on Ruby installation..."
+# Configuring ruby for not generating documentation.
+__laptop_mac_append_text_to_file "$HOME/.gemrc" "gem: --no-document"
+# Install ruby using chruby and ruby-install if rvm and rbenv are not found.
+if not command -sq rbenv; and not command -sq rvm
+  # Install chruby and chruby-fish.
+  __laptop_mac_brew_install_formula "chruby"
+  __laptop_mac_brew_install_formula "chruby-fish"
+  # Configure chruby for Fish.
+  __laptop_mac_append_text_to_fish_config_file 'source /usr/local/share/chruby/chruby.fish'
+  __laptop_mac_append_text_to_fish_config_file 'source /usr/local/share/chruby/auto.fish'
+  source /usr/local/share/chruby/chruby.fish
+  source /usr/local/share/chruby/auto.fish
+  # Install ruby-install.
+  __laptop_mac_brew_install_formula "ruby-install"
+  # Install latest ruby.
+  echo "Installing latest ruby..."
+  ruby-install --latest
+  __laptop_mac_exit_on_error
+  ruby-install --no-reinstall --latest ruby
+  __laptop_mac_exit_on_error
+  # Get latest installed ruby version.
+  set -l latest_installed_ruby (__laptop_mac_get_latest_installed_ruby)
+  # Configure latest ruby to Fish config.
+  __laptop_mac_replace_text_in_fish_config_file '^chruby ruby-.*$' "chruby ruby-$latest_installed_ruby"
+  __laptop_mac_append_text_to_fish_config_file "chruby ruby-$latest_installed_ruby"
+  # Switch to latest ruby.
+  chruby "ruby-$latest_installed_ruby"
+else
+  echo "We recommend chruby and ruby-install over RVM or rbenv."
+  echo "Skipping chruby and ruby-install configuration..."
+  echo "Remove RVM or rbenv and rerun this script to configure chruby and ruby-install."
+end
+# Update rubygems.
+echo "Updating Rubygems..."
+gem update --system
+gem install 'bundler'
+# Configure bundle.
+echo "Configuring Bundler ..."
+set -l number_of_cores (sysctl -n hw.ncpu)
+bundle config --global jobs (math "$number_of_cores - 1")
+echo "...Finished Ruby installation checks."
+
+# Install python and configure fish
+echo "Checking on Python installation..."
+if not __laptop_mac_brew_formula_is_installed 'python3'
+  # Install pyenv, pyenv-virtualenv and pyenv-virtualenvwrapper.
+  __laptop_mac_brew_install_formula "pyenv"
+  __laptop_mac_brew_install_formula "pyenv-virtualenv"
+  __laptop_mac_brew_install_formula "pyenv-virtualenvwrapper"
+
+  __laptop_mac_append_text_to_fish_config_file 'set -x PATH "$HOME/.pyenv/bin" $PATH'
+  __laptop_mac_append_text_to_fish_config_file 'status --is-interactive; and source (pyenv init -|psub)'
+  set -x PATH "$HOME/.pyenv/bin" $PATH
+  status --is-interactive; and source (pyenv init -|psub)
+
+  # pyenv currently doesn't have a convenience version to use, e.g., "latest",
+  # so we check for the latest version against Homebrew instead.
+  set -l latest_python_3 (brew info python3 | egrep -o "3\.\d+\.\d+" | head -1)
+  # Install latest python3.
+  if not pyenv versions | ag "$latest_python_3"
+    echo "Installing latest python3..."
+    pyenv install "$latest_python_3"
+    pyenv global "$latest_python_3"
+    pyenv rehash
+  end
+else
+  echo "Python3 is installed using Homebrew."
+  echo "Skipping pyenv configuration..."
+  echo "Remove the python3 formula and rerun this script to configure pyenv."
+end
+echo "...Finished Python installation checks."
+
+# Install node and configure fish
+echo "Checking on Node.js installation..."
+if not command -sq n
+  # Install nvm.
+  if not type -q nvm
+    echo "Installing nvm, Node.js (LTS) and npm..."
+    curl -o- 'https://raw.githubusercontent.com/creationix/nvm/v0.33.0/install.sh' | bash
+    __laptop_mac_exit_on_error
+    # Configure NVM for Fish.
+    __laptop_mac_append_text_to_fish_config_file 'set -gx NVM_DIR "$HOME/.nvm"'
+    set -gx NVM_DIR "$HOME/.nvm"
+    __laptop_mac_omf_install_package "nvm"
+  else
+    echo "nvm is already installed"
+  end
+  # Install latest Node (LTS)
+  nvm install node --lts
+  __laptop_mac_exit_on_error
+else
+  echo "A Node.js version manager was detected."
+  echo "We recommend using 'nvm' and not 'n'."
+  echo "See the following write-up from 18F for more details:"
+  echo "  https://frontend.18f.gov/javascript/dependencies/#install-npm"
+  echo "Skipping nvm configuration..."
+  echo "Remove your Node.js version manager and rerun this script to configure nvm."
+end
+echo "...Finished Node.js installation checks."
+
+# Install extra packages and taps.
+__laptop_mac_brew_bundle_file "Brewfile.extras"
+
+# Done!
+echo "All done!"

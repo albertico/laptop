@@ -1,0 +1,15 @@
+#!/bin/bash
+
+if command -v fish >/dev/null; then
+  fish_cmd=$(command -v fish)
+else
+  echo "Fish not found, downloading temporary interactive shell..."
+  tmp_fish_dir=$(mktemp -d /tmp/fish.XXXXXX)
+  curl -L 'https://github.com/fish-shell/fish-shell/releases/download/2.7.1/fish-2.7.1.app.zip' -o "$tmp_fish_dir/fish.app.zip"
+  echo "Unzipping Fish shell..."
+  unzip "$tmp_fish_dir/fish.app.zip" -d "$tmp_fish_dir"
+  fish_cmd="$tmp_fish_dir/fish.app/Contents/Resources/base/bin/fish"
+  echo "Temporary interactive Fish shell at $fish_cmd"
+fi
+
+$fish_cmd ./mac # 2>&1 | tee ./laptop.log
