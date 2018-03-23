@@ -1,0 +1,7 @@
+cask_args appdir: "/Applications"
+cask "slack"
+cask "hipchat"
+cask "skype"
+cask "skype-for-business"
+cask "whatsapp"
+cask "zoomus"
