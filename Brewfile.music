@@ -1,0 +1,7 @@
+cask_args appdir: "/Applications"
+brew "youtube-dl"
+brew "mps-youtube"
+brew "mpv"
+cask "vlc"
+cask "amazon-music"
+cask "marshallofsound-google-play-music-player"
